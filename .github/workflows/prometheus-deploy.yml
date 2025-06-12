@@ -1,0 +1,136 @@
+name: Deploy Prom Monitoring Stack
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: backend
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: SSH into VM and Set Up Monitoring Stack
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ vars.VM_IP }}
+          username: ${{ vars.VM_USER }}
+          key: ${{ secrets.VM_KEY }}
+          script: |
+            set -e
+            
+            echo "🚀 Removing conflicting Docker components..."
+            sudo apt remove -y containerd containerd.io docker docker-engine docker.io runc
+            
+            # Optionally purge configuration files (if you’re OK with removing any Docker configuration)
+            sudo apt purge -y containerd containerd.io docker docker-engine docker.io runc
+            
+            # Unhold any held packages (if any)
+            sudo apt-mark unhold containerd containerd.io
+            
+            echo "🚀 Updating System..."
+            sudo apt update && sudo apt install -y docker.io curl jq
+            
+            echo "🚀 Waiting for Docker to start..."
+            max_wait=60  # maximum seconds to wait
+            waited=0
+            while ! sudo systemctl is-active --quiet docker && [ $waited -lt $max_wait ]; do
+            sleep 1
+            waited=$((waited+1))
+            done
+            
+            if [ $waited -ge $max_wait ]; then
+            echo "🚨 Docker did not become active within $max_wait seconds. Restarting Docker..."
+            sudo systemctl restart docker
+            sleep 5  # give Docker a few more seconds after restart
+            fi
+            
+            if sudo systemctl is-active --quiet docker; then
+            echo "✅ Docker is active!"
+            else
+            echo "❌ Docker failed to start! Exiting."
+            exit 1
+            fi
+            
+            echo "🚀 Creating Prometheus Configuration..."
+            sudo mkdir -p /home/ubuntu/prometheus
+            cat <<EOF | sudo tee /home/ubuntu/prometheus/prometheus.yml
+            global:
+              scrape_interval: 15s  # Scrape every 15 seconds
+            scrape_configs:
+              - job_name: "prometheus"
+                static_configs:
+                  - targets: ["localhost:9090"]
+
+              - job_name: "node_exporter"
+                static_configs:
+                  - targets: ["host.docker.internal:9100"]
+
+            remote_write:
+              - url: "http://host.docker.internal:9201"
+            EOF
+
+            echo "🚀 Starting Prometheus..."
+            sudo docker stop prometheus || true
+            sudo docker rm prometheus || true
+            sudo docker run -d --name prometheus \
+              --add-host=host.docker.internal:host-gateway \
+              -p 9090:9090 \
+              -v /home/ubuntu/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml \
+              prom/prometheus --config.file=/etc/prometheus/prometheus.yml
+
+            echo "🚀 Starting Node Exporter..."
+            sudo docker stop node-exporter || true
+            sudo docker rm node-exporter || true
+            sudo docker run -d --name node-exporter \
+              -p 9100:9100 \
+              prom/node-exporter
+
+            echo "🚀 Setting Up Vector..."
+            sudo apt install -y vector
+            sudo mkdir -p /etc/vector
+            cat <<EOF | sudo tee /etc/vector/vector.yaml
+            sources:
+              better_stack_prometheus_source:
+                type: "prometheus_remote_write"
+                address: "0.0.0.0:9201"
+
+            transforms:
+              metric_to_log:
+                type: "metric_to_log"
+                inputs:
+                  - "better_stack_prometheus_source"
+            
+              remap:
+                type: "remap"
+                inputs:
+                  - "metric_to_log"
+                source: |
+                  .dt = del(.timestamp)
+                  string_name = string(.name) ?? ""
+                  if (ends_with(string_name, "_total") || ends_with(string_name, "_sum") || ends_with(string_name, "_counter")) && is_object(.gauge) {
+                    .counter.value = del(.gauge.value)
+                    del(.gauge)
+                  }
+
+            sinks:
+              better_stack_http_sink:
+                type: "http"
+                inputs:
+                  - "remap"
+                uri: "https://in.logs.betterstack.com/metrics"
+                method: "post"
+                encoding:
+                  codec: "json"
+                compression: "gzip"
+                auth:
+                  strategy: "bearer"
+                  token: "${{ secrets.BETTERSTACK_PROM_TOKEN }}"   
+            EOF
+
+            echo "🚀 Restarting Vector..."
+            sudo systemctl restart vector || sudo systemctl enable --now vector
+
+            echo "✅ Deployment Completed!"
