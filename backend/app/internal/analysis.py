@@ -12,7 +12,7 @@ from app.database.setup import Answer, Question, Quiz, SentimentAnalysis, Summar
 from processing.sentiment import roberta
 from processing.topics import bertopic, lda
 from processing.definitions import AnalysisRequest, Answer as AnalysisAnswer
-from processing.sentiment.main import analyse_sentiments
+from backend.processing.sentiment.vader import analyse_sentiments
 from processing.summary import openai_llm, openai_reasoning
 from processing.formatting.question_import import (
     QuestionFormat,
