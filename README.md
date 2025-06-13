@@ -32,17 +32,25 @@ walkthrough video has been created:
 ### 🖥️ **Frontend**
 
 > Frontend documentation at [./frontend/README.md](./frontend/README.md)
-> - Project management
-> - Setup steps
-> - Screenshots of GUI
+> - [Project management](./frontend/README.md#frontend-management)
+> - [Setup and run](./frontend/README.md#frontend-setup)
+> - [Structure](./frontend/README.md#frontend-structure)
+> - [User interface and functionality](./frontend/README.md#frontend-ui)
 
 ### ☁️ **Backend**
 
 > Backend documentation at [./backend/README.md](./backend/README.md)
-> - Project management
-> - Setup steps
-> - Backend API structure
-> - Database migrations
-> - NLP processing module
+> - [Project management](./backend/README.md#backend-management)
+> - [Setup and run](./backend/README.md#backend-setup)
+> - [Backend API](./backend/README.md#backend-api)
+> - [Database migrations](./backend/README.md#backend-database)
+> - [Processing module](./backend/README.md#backend-processing)
+
+### 🚀 **Deployment**
+
+There are two main ways to deploy with the current setup:
+
+> 1. Deploy to AWS using Github actions. See [.github/workflows/README.md](.github/workflows/README.md).
+> 2. Deploy manually to a Linux VM (e.g. hosted by NTNU) and running the setup for the frontend and backend.
 
 
