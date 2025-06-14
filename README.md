@@ -27,7 +27,8 @@ walkthrough video has been created:
 ### 🎨 **Design documents**
 
 [Figma](https://www.figma.com) was used to create diagrams, design sketches and prototypes.
-> Design documents from Figma at [./resources/figma/](./resources/figma/)
+> - Copy of Figma file that can be opened in [Figma](https://www.figma.com): [./resources/figma/thesis-diagrams.fig](./resources/figma/thesis-diagrams.fig)
+> - PDF containing all Figma documents for convenience: [./resources/figma/thesis-diagrams.pdf](./resources/figma/thesis-diagrams.pdf)
 
 ### 🖥️ **Frontend**
 
