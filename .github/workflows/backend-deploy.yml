@@ -1,0 +1,185 @@
+name: Backend deploy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  configure-nginx:
+    name: Configure Nginx
+    runs-on: ubuntu-latest
+    environment:
+      name: backend
+      url: https://backend.quizzma.no
+
+    steps:
+      - name: Configure Nginx reverse proxy
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ vars.VM_IP }}
+          username: ${{ vars.VM_USER }}
+          key: ${{ secrets.VM_KEY }}
+          script: |
+            # Write the Nginx configuration
+            echo "server {
+                listen 80;
+                server_name backend.quizzma.no;
+
+                location / {
+                    proxy_pass http://127.0.0.1:8000;
+                    proxy_set_header Host \$host;
+                    proxy_set_header X-Real-IP \$remote_addr;
+                    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto \$scheme;
+                }
+            }
+
+            server {
+                listen 443 ssl;
+                server_name backend.quizzma.no;
+
+                ssl_certificate /etc/letsencrypt/live/backend.quizzma.no/fullchain.pem;
+                ssl_certificate_key /etc/letsencrypt/live/backend.quizzma.no/privkey.pem;
+
+                location / {
+                    proxy_pass http://127.0.0.1:8000;
+                    proxy_set_header Host \$host;
+                    proxy_set_header X-Real-IP \$remote_addr;
+                    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto \$scheme;
+                    proxy_http_version 1.1;
+                    proxy_set_header Upgrade \$http_upgrade;
+                    proxy_set_header Connection "upgrade";
+                }
+            }" | sudo tee /etc/nginx/conf.d/backend.conf
+
+            # Test and restart Nginx
+            sudo nginx -t
+            sudo systemctl restart nginx
+      
+
+      - name: Set up SSL certificates
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ vars.VM_IP }}
+          username: ${{ vars.VM_USER }}
+          key: ${{ secrets.VM_KEY }}
+          script: |
+            # Install Certbot if not installed
+            sudo apt-get install -y certbot
+
+            # Obtain SSL certificates
+            if [ ! -d "/etc/letsencrypt/live/backend.quizzma.no" ]; then
+              sudo certbot certonly --nginx -d backend.quizzma.no --non-interactive --agree-tos -m domene@fonnweb.no
+            fi
+
+            # Ensure SSL certificates are renewed automatically
+            (sudo crontab -l 2>/dev/null; echo "0 2 * * 1 certbot renew --quiet && sudo systemctl restart nginx") | sudo crontab -
+
+  deploy-backend:
+    name: Deploy FastAPI Backend
+    runs-on: ubuntu-latest
+    needs: configure-nginx
+    environment:
+      name: backend
+      url: https://backend.quizzma.no
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Backup database
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ vars.VM_IP }}
+          username: ${{ vars.VM_USER }}
+          key: ${{ secrets.VM_KEY }}
+          script: |
+            mkdir -p /home/${{ vars.VM_USER }}/persistent_db
+            cp /home/${{ vars.VM_USER }}/backend/app/database/database.db /home/${{ vars.VM_USER }}/persistent_db/database.db
+
+
+      - name: Remove old backend
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ vars.VM_IP }}
+          username: ${{ vars.VM_USER }}
+          key: ${{ secrets.VM_KEY }}
+          script: |
+            sudo rm -rf /home/${{ vars.VM_USER }}/backend/*
+
+      - name: Copy repository to EC2
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ vars.VM_IP }}
+          username: ${{ vars.VM_USER }}
+          key: ${{ secrets.VM_KEY }}
+          source: '.'
+          target: '/home/${{ vars.VM_USER }}'
+
+
+      - name: Restore database
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ vars.VM_IP }}
+          username: ${{ vars.VM_USER }}
+          key: ${{ secrets.VM_KEY }}
+          script: |
+            cp /home/${{ vars.VM_USER }}/persistent_db/database.db /home/${{ vars.VM_USER }}/backend/app/database/database.db
+            chmod 664 /home/${{ vars.VM_USER }}/backend/app/database/database.db
+
+
+      - name: Setup virtual environment and dependencies
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ vars.VM_IP }}
+          username: ${{ vars.VM_USER }}
+          key: ${{ secrets.VM_KEY }}
+          script: |
+            cd /home/${{ vars.VM_USER }}/backend
+            uv sync
+
+            cat << EOF > .env
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+            DATABASE_URL=${{ vars.DATABASE_URL }}
+            FASTAPI_HOST=0.0.0.0
+            FASTAPI_PORT=8000
+            DEBUG=true
+            SOURCE_TOKEN=${{ secrets.SOURCE_TOKEN }}
+            EOF
+
+
+      - name: Run migrations
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ vars.VM_IP }}
+          username: ${{ vars.VM_USER }}
+          key: ${{ secrets.VM_KEY }}
+          script: |
+            cd /home/${{ vars.VM_USER }}/backend
+            uv run task migrate
+      
+
+      - name: Configure and start FastAPI backend service
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ vars.VM_IP }}
+          username: ${{ vars.VM_USER }}
+          key: ${{ secrets.VM_KEY }}
+          script: |
+            echo "[Unit]
+            Description=FastAPI Application Service
+            After=network.target
+
+            [Service]
+            ExecStart=/home/${{ vars.VM_USER }}/.local/bin/uv run task prod
+            WorkingDirectory=/home/${{ vars.VM_USER }}/backend
+            Restart=always
+            User=${{ vars.VM_USER }}
+            EnvironmentFile=/home/${{ vars.VM_USER }}/backend/.env
+
+            [Install]
+            WantedBy=multi-user.target" | sudo tee /etc/systemd/system/fastapi.service
+
+            sudo systemctl daemon-reload
+            sudo systemctl enable fastapi
+            sudo systemctl restart fastapi

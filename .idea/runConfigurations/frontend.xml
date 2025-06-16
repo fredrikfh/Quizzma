@@ -1,0 +1,16 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="frontend" type="js.build_tools.npm">
+    <package-json value="$PROJECT_DIR$/frontend/package.json" />
+    <command value="run" />
+    <scripts>
+      <script value="dev" />
+    </scripts>
+    <node-interpreter value="$USER_HOME$/.bun/bin/bun" />
+    <package-manager value="$USER_HOME$/.bun/bin/bun" />
+    <envs />
+    <EXTENSION ID="com.intellij.lang.javascript.buildTools.npm.rc.StartBrowserRunConfigurationExtension">
+      <browser name="e5120d43-2c3f-47ef-9f26-65e539e05186" start="true" url="http://localhost:5173" />
+    </EXTENSION>
+    <method v="2" />
+  </configuration>
+</component>

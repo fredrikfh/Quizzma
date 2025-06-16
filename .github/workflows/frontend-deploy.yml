@@ -1,0 +1,70 @@
+name: Frontend deploy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: frontend
+      url: https://quizzma.no
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - uses: oven-sh/setup-bun@v1
+
+      - name: Remove old frontend (excluding .htaccess)
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          port: 22
+          script: |
+            mkdir -p www
+            chmod -R 755 www
+            cd www
+            find . -type f ! -name '.htaccess' -delete
+            find . -type d ! -name '.' ! -name '..' -exec rm -rf {} +
+
+      - name: Install Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies with Bun
+        run: bun install
+        working-directory: ./frontend
+
+      - name: Build Project with Bun
+        run: bun run build
+        working-directory: ./frontend
+        env:
+          VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
+          VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          NODE_ENV: ${{ vars.FRONTEND_NODE_ENV }}
+
+
+      - name: Copy build files to the server
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          port: 22
+          source: './frontend/dist/*'
+          target: '/www'
+
+      - name: Move files from frontend/dist to web root
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          port: 22
+          script: |
+            cp -r /www/frontend/dist/* /www/
+            rm -rf /www/frontend
